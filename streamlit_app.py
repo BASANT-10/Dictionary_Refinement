@@ -1,5 +1,3 @@
-# streamlit_app.py
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -10,14 +8,14 @@ import re
 import ast
 import nltk
 
-# Ensure stopwords are available
+# Download stopwords if not already present
 nltk.download('stopwords')
 from nltk.corpus import stopwords
 
-# Title
-st.title("🧠 Dictionary-Based Text Classification")
+# App Title
+st.title("🧠 Dictionary-Based Text Classification Tool")
 
-# Step 1: Choose tactic
+# Step 1: Select Tactic
 st.header("Step 1: Choose a Marketing Tactic")
 
 default_tactics = {
@@ -39,11 +37,11 @@ if uploaded_file:
     st.subheader("Preview of Uploaded Data")
     st.dataframe(df.head())
 
-    # Step 3: Select text column
+    # Step 3: Select Text Column
     st.header("Step 3: Select the Text Column")
-    text_col = st.selectbox("Select column to analyze", df.columns)
+    text_col = st.selectbox("Select column for text analysis", df.columns)
 
-    # Step 4: Clean text and extract top words
+    # Step 4: Clean Text and Extract Top Words
     def clean_text(text):
         return re.sub(r'[^a-zA-Z0-9\s]', '', str(text).lower())
 
@@ -56,13 +54,14 @@ if uploaded_file:
     st.subheader("🔍 Top Keywords from Text")
     st.dataframe(top_words)
 
-    # Step 5: Build or edit dictionary
-    st.header("Step 4: Review or Edit the Suggested Dictionary")
+    # Step 5: Review/Edit Dictionary
+    st.header("Step 4: Review or Edit Dictionary")
+
     generated_dict = {tactic_name: set(top_words.index.tolist())}
     default_dict_str = str(generated_dict)
 
     custom_dict_str = st.text_area(
-        "Edit the dictionary (in Python dict format):",
+        "Edit the dictionary below (Python dictionary format):",
         value=default_dict_str,
         height=200
     )
@@ -71,10 +70,10 @@ if uploaded_file:
         dictionary = ast.literal_eval(custom_dict_str)
         st.success("✅ Dictionary loaded successfully.")
     except Exception as e:
-        st.error(f"Invalid dictionary format. Using auto-generated one.\n{e}")
+        st.error(f"⚠️ Invalid dictionary format. Using auto-generated one.\nError: {e}")
         dictionary = generated_dict
 
-    # Step 6: Classification
+    # Step 6: Classify Text
     st.header("Step 5: Classify Text")
 
     def classify(text, search_dict):
@@ -87,7 +86,7 @@ if uploaded_file:
     df['categories'] = df['cleaned_text'].apply(lambda x: classify(x, dictionary))
 
     st.subheader("📋 Sample Classification Results")
-    st.dataframe(df[['original_text', 'categories']] if 'original_text' in df else df[['cleaned_text', 'categories']])
+    st.dataframe(df[['cleaned_text', 'categories']])
 
     # Step 7: Category Frequencies
     st.subheader("📊 Category Frequency Summary")
@@ -104,17 +103,18 @@ if uploaded_file:
     st.pyplot(fig)
 
     # Step 9: Download Results
-    st.header("Step 6: Download Results")
+    st.header("Step 6: Download Outputs")
 
     df.to_csv("classified_results.csv", index=False)
     category_counts.to_csv("category_frequencies.csv")
     top_words.to_csv("top_keywords.csv")
 
     with open("classified_results.csv", "rb") as f:
-        st.download_button("📥 Download Full Classification", f, file_name="classified_results.csv")
+        st.download_button("📥 Download Classified Results", f, file_name="classified_results.csv")
 
     with open("category_frequencies.csv", "rb") as f:
         st.download_button("📥 Download Category Frequencies", f, file_name="category_frequencies.csv")
 
     with open("top_keywords.csv", "rb") as f:
         st.download_button("📥 Download Top Keywords", f, file_name="top_keywords.csv")
+
