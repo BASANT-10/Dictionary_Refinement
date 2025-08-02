@@ -1,105 +1,124 @@
-# STEP 0: Install required packages
-!pip install -q pandas matplotlib   # ⬅️ wordcloud removed
-
-# STEP 1: Imports
+# app.py  ── run with:  streamlit run app.py
+# STEP 0: Imports (Streamlit handles packages; ensure pandas, matplotlib installed)
+import streamlit as st
 import pandas as pd
 import numpy as np
-from collections import Counter
-import matplotlib.pyplot as plt     # WordCloud import removed
+import matplotlib.pyplot as plt
 import re, ast
-from google.colab import files
-import io
+from collections import Counter
+from io import BytesIO
+
+# ---------- UI LAYOUT ----------
+st.title("📊 Marketing-Tactic Text Classifier")
 
 # STEP 2: Choose tactic
-print("🎯 Choose a marketing tactic from the options below:")
 default_tactics = {
     "urgency_marketing": ['now', 'today', 'limited', 'hurry', 'exclusive'],
     "social_proof": ['bestseller', 'popular', 'trending', 'recommended'],
     "discount_marketing": ['sale', 'discount', 'deal', 'free', 'offer']
 }
 
-for i, tactic in enumerate(default_tactics):
-    print(f"{i}. {tactic}")
-
-tactic_idx = int(input("Enter the number of your chosen tactic: "))
-tactic_name = list(default_tactics.keys())[tactic_idx]
-print(f"✅ Selected tactic: {tactic_name}")
+st.subheader("🎯 Choose a marketing tactic")
+tactic_name = st.selectbox("Select tactic:", list(default_tactics.keys()))
+st.write(f"✅ Selected tactic: **{tactic_name}**")
 
 # STEP 3: Upload CSV
-print("\n📁 Upload your CSV file:")
-uploaded = files.upload()
-df = pd.read_csv(io.BytesIO(list(uploaded.values())[0]))
-print("✅ File uploaded. First few rows:")
-display(df.head())
+st.subheader("📁 Upload your CSV file")
+uploaded_file = st.file_uploader("Choose a CSV", type=["csv"])
 
-# STEP 4: Select column
-print("\n📋 Available columns:")
-for i, col in enumerate(df.columns):
-    print(f"{i}. {col}")
-col_idx = int(input("Enter the column number containing the text to analyze: "))
-text_col = df.columns[col_idx]
-print(f"✅ Selected column: {text_col}")
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    st.success("File uploaded")
+    st.dataframe(df.head())
 
-# STEP 5: Clean text and extract top keywords
-def clean_text(text):
-    return re.sub(r'[^a-zA-Z0-9\s]', '', str(text).lower())
+    # STEP 4: Select column
+    st.subheader("📋 Select text column")
+    text_col = st.selectbox("Column containing text to analyze:", df.columns)
+    st.write(f"✅ Selected column: **{text_col}**")
 
-df['cleaned_text'] = df[text_col].apply(clean_text)
+    # Run button to trigger analysis
+    if st.button("Run Analysis"):
+        # STEP 5: Clean text & extract top keywords
+        def clean_text(text):
+            return re.sub(r'[^a-zA-Z0-9\s]', '', str(text).lower())
 
-all_words = ' '.join(df['cleaned_text']).split()
-word_freq = pd.Series(all_words).value_counts()
-top_words = word_freq[word_freq > 1].head(20)
-print("\n🔍 Top keywords in your data:")
-print(top_words)
+        df['cleaned_text'] = df[text_col].apply(clean_text)
+        all_words = ' '.join(df['cleaned_text']).split()
+        word_freq = pd.Series(all_words).value_counts()
+        top_words = word_freq[word_freq > 1].head(20)
 
-# STEP 6: Build editable dictionary
-print("\n🧠 Auto-suggesting dictionary from top words for tactic:", tactic_name)
-generated_dict = {tactic_name: set(top_words.index.tolist())}
-print("🛠️ Generated dictionary:", generated_dict)
+        st.write("🔍 **Top keywords in your data:**")
+        st.dataframe(top_words)
 
-edit_dict = input("✏️ Would you like to edit the dictionary? (y/n): ").strip().lower()
-if edit_dict == 'y':
-    print("Enter your custom dictionary in Python format like:")
-    print("{'urgency_marketing': {'now', 'hurry'}}")
-    custom_dict_str = input("Paste your dictionary here:\n")
-    dictionary = ast.literal_eval(custom_dict_str)
+        # STEP 6: Build editable dictionary
+        generated_dict = {tactic_name: set(top_words.index.tolist())}
+        st.write("🧠 *Auto-generated dictionary:*", generated_dict)
+
+        edit = st.checkbox("✏️ Edit dictionary?")
+        if edit:
+            custom_dict_str = st.text_area(
+                "Paste your dictionary here "
+                "(e.g. {'urgency_marketing': {'now', 'hurry'}})",
+                value=str(generated_dict)
+            )
+            dictionary = ast.literal_eval(custom_dict_str)
+        else:
+            dictionary = generated_dict
+
+        st.write("✅ **Final dictionary used:**", dictionary)
+
+        # STEP 7: Classify text
+        def classify(text, search_dict):
+            cats = [
+                cat for cat, terms in search_dict.items()
+                if any(term in text.split() for term in terms)
+            ]
+            return cats if cats else ['uncategorized']
+
+        df['categories'] = df['cleaned_text'].apply(lambda x: classify(x, dictionary))
+
+        # STEP 8: Show results
+        category_counts = pd.Series(
+            [c for cats in df['categories'] for c in cats]
+        ).value_counts()
+
+        st.subheader("📊 Category frequencies")
+        st.table(category_counts)
+
+        st.subheader("🔑 Top keywords")
+        st.table(top_words)
+
+        # STEP 9: Bar chart (alternative to WordCloud)
+        fig, ax = plt.subplots(figsize=(10, 5))
+        top_words.sort_values(ascending=False).plot(kind='bar', ax=ax)
+        ax.set_xlabel("Keywords")
+        ax.set_ylabel("Frequency")
+        ax.set_title("Top Keyword Frequencies")
+        st.pyplot(fig)
+
+        # STEP 10: Download results
+        def to_csv_bytes(dataframe):
+            return dataframe.to_csv(index=False).encode()
+
+        st.subheader("💾 Download results")
+        st.download_button(
+            "Download classified_results.csv",
+            data=to_csv_bytes(df),
+            file_name="classified_results.csv",
+            mime="text/csv"
+        )
+        st.download_button(
+            "Download category_frequencies.csv",
+            data=category_counts.to_csv().encode(),
+            file_name="category_frequencies.csv",
+            mime="text/csv"
+        )
+        st.download_button(
+            "Download top_keywords.csv",
+            data=top_words.to_csv().encode(),
+            file_name="top_keywords.csv",
+            mime="text/csv"
+        )
+
 else:
-    dictionary = generated_dict
-
-print("✅ Final dictionary used:", dictionary)
-
-# STEP 7: Classify text
-def classify(text, search_dict):
-    categories = []
-    for cat, terms in search_dict.items():
-        if any(term in text.split() for term in terms):
-            categories.append(cat)
-    return categories if categories else ['uncategorized']
-
-df['categories'] = df['cleaned_text'].apply(lambda x: classify(x, dictionary))
-
-# STEP 8: Show results
-print("\n📊 Category frequencies:")
-category_counts = pd.Series([cat for cats in df['categories'] for cat in cats]).value_counts()
-print(category_counts)
-
-print("\n🔑 Top keywords:")
-print(top_words)
-
-# STEP 9: Bar chart (alternative to WordCloud)
-plt.figure(figsize=(12, 6))
-top_words.sort_values(ascending=False).plot(kind='bar')
-plt.xlabel('Keywords')
-plt.ylabel('Frequency')
-plt.title('Top Keyword Frequencies')
-plt.xticks(rotation=45)
-plt.tight_layout()
-plt.show()
-
-# STEP 10: Save results
-df.to_csv("classified_results.csv", index=False)
-category_counts.to_csv("category_frequencies.csv")
-top_words.to_csv("top_keywords.csv")
-files.download("classified_results.csv")
-files.download("category_frequencies.csv")
-files.download("top_keywords.csv")
+    st.info("Awaiting CSV upload...")
