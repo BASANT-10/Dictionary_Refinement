@@ -1,21 +1,23 @@
-# app.py  ── run with:  streamlit run app.py
-# STEP 0: Imports (Streamlit handles packages; ensure pandas, matplotlib installed)
+streamlit>=1.35
+pandas>=2.0
+numpy>=1.26
+matplotlib>=3.9
+# app.py  – run with:  streamlit run app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import re, ast
-from collections import Counter
 from io import BytesIO
+from collections import Counter
 
-# ---------- UI LAYOUT ----------
 st.title("📊 Marketing-Tactic Text Classifier")
 
 # STEP 2: Choose tactic
 default_tactics = {
     "urgency_marketing": ['now', 'today', 'limited', 'hurry', 'exclusive'],
-    "social_proof": ['bestseller', 'popular', 'trending', 'recommended'],
-    "discount_marketing": ['sale', 'discount', 'deal', 'free', 'offer']
+    "social_proof":      ['bestseller', 'popular', 'trending', 'recommended'],
+    "discount_marketing":['sale', 'discount', 'deal', 'free', 'offer']
 }
 
 st.subheader("🎯 Choose a marketing tactic")
@@ -43,9 +45,9 @@ if uploaded_file is not None:
             return re.sub(r'[^a-zA-Z0-9\s]', '', str(text).lower())
 
         df['cleaned_text'] = df[text_col].apply(clean_text)
-        all_words = ' '.join(df['cleaned_text']).split()
-        word_freq = pd.Series(all_words).value_counts()
-        top_words = word_freq[word_freq > 1].head(20)
+        all_words  = ' '.join(df['cleaned_text']).split()
+        word_freq  = pd.Series(all_words).value_counts()
+        top_words  = word_freq[word_freq > 1].head(20)
 
         st.write("🔍 **Top keywords in your data:**")
         st.dataframe(top_words)
@@ -54,8 +56,7 @@ if uploaded_file is not None:
         generated_dict = {tactic_name: set(top_words.index.tolist())}
         st.write("🧠 *Auto-generated dictionary:*", generated_dict)
 
-        edit = st.checkbox("✏️ Edit dictionary?")
-        if edit:
+        if st.checkbox("✏️ Edit dictionary?"):
             custom_dict_str = st.text_area(
                 "Paste your dictionary here "
                 "(e.g. {'urgency_marketing': {'now', 'hurry'}})",
@@ -69,13 +70,12 @@ if uploaded_file is not None:
 
         # STEP 7: Classify text
         def classify(text, search_dict):
-            cats = [
-                cat for cat, terms in search_dict.items()
-                if any(term in text.split() for term in terms)
-            ]
-            return cats if cats else ['uncategorized']
+            cats = [cat for cat, terms in search_dict.items()
+                    if any(term in text.split() for term in terms)]
+            return cats or ['uncategorized']
 
-        df['categories'] = df['cleaned_text'].apply(lambda x: classify(x, dictionary))
+        df['categories'] = df['cleaned_text'].apply(
+            lambda txt: classify(txt, dictionary))
 
         # STEP 8: Show results
         category_counts = pd.Series(
@@ -88,7 +88,7 @@ if uploaded_file is not None:
         st.subheader("🔑 Top keywords")
         st.table(top_words)
 
-        # STEP 9: Bar chart (alternative to WordCloud)
+        # STEP 9: Bar chart (WordCloud alternative)
         fig, ax = plt.subplots(figsize=(10, 5))
         top_words.sort_values(ascending=False).plot(kind='bar', ax=ax)
         ax.set_xlabel("Keywords")
@@ -97,28 +97,27 @@ if uploaded_file is not None:
         st.pyplot(fig)
 
         # STEP 10: Download results
-        def to_csv_bytes(dataframe):
-            return dataframe.to_csv(index=False).encode()
+        def to_csv_bytes(df_):
+            return df_.to_csv(index=False).encode()
 
         st.subheader("💾 Download results")
         st.download_button(
-            "Download classified_results.csv",
+            "classified_results.csv",
             data=to_csv_bytes(df),
             file_name="classified_results.csv",
             mime="text/csv"
         )
         st.download_button(
-            "Download category_frequencies.csv",
+            "category_frequencies.csv",
             data=category_counts.to_csv().encode(),
             file_name="category_frequencies.csv",
             mime="text/csv"
         )
         st.download_button(
-            "Download top_keywords.csv",
+            "top_keywords.csv",
             data=top_words.to_csv().encode(),
             file_name="top_keywords.csv",
             mime="text/csv"
         )
-
 else:
-    st.info("Awaiting CSV upload...")
+    st.info("Awaiting CSV upload…")
