@@ -1,7 +1,4 @@
-streamlit>=1.35
-pandas>=2.0
-numpy>=1.26
-matplotlib>=3.9
+
 # app.py  – run with:  streamlit run app.py
 import streamlit as st
 import pandas as pd
