@@ -78,6 +78,8 @@ if file:
             dictionary= st.session_state.dictionary
 
             df["categories"] = df["cleaned"].apply(lambda x: classify(x, dictionary))
+            df["tactic_flag"] = df["categories"].apply(lambda cats: 1 if tactic in cats else 0)  # <<< ADDED
+
             counts = pd.Series([c for cats in df["categories"] for c in cats]).value_counts()
 
             st.subheader("📊 Category frequencies")
@@ -106,6 +108,7 @@ if file:
                                "text/csv")
 else:
     st.info("Upload a CSV to begin.")
+
 
 
 
