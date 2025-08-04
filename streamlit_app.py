@@ -12,13 +12,14 @@ default_tactics = {
     "social_proof":       ["bestseller", "popular", "trending", "recommended"],
     "discount_marketing": ["sale", "discount", "deal", "free", "offer"],
     "Classic_Timeless_Luxury_style": [
-    'elegance', 'heritage', 'sophistication', 'refined', 'timeless', 'grace', 'legacy',
-    'opulence', 'bespoke', 'tailored', 'understated', 'prestige', 'quality',
-    'craftsmanship', 'heirloom', 'classic', 'tradition', 'iconic', 'enduring',
-    'rich', 'authentic', 'luxury', 'fine', 'pure', 'exclusive', 'elite', 'mastery',
-    'immaculate', 'flawless', 'distinction', 'noble', 'chic', 'serene', 'clean',
-    'minimal', 'poised', 'balanced', 'eternal', 'neutral', 'subtle', 'grand', 'legacy',
-    'timelessness', 'tasteful', 'quiet', 'sublime']
+        'elegance', 'heritage', 'sophistication', 'refined', 'timeless', 'grace',
+        'legacy', 'opulence', 'bespoke', 'tailored', 'understated', 'prestige',
+        'quality', 'craftsmanship', 'heirloom', 'classic', 'tradition', 'iconic',
+        'enduring', 'rich', 'authentic', 'luxury', 'fine', 'pure', 'exclusive',
+        'elite', 'mastery', 'immaculate', 'flawless', 'distinction', 'noble',
+        'chic', 'serene', 'clean', 'minimal', 'poised', 'balanced', 'eternal',
+        'neutral', 'subtle', 'grand', 'timelessness', 'tasteful', 'quiet', 'sublime'
+    ]
 }
 tactic = st.selectbox("🎯 Step 1 — choose a tactic", list(default_tactics.keys()))
 st.write(f"Chosen tactic: **{tactic}**")
@@ -37,7 +38,6 @@ def classify(txt: str, d):
     ] or ["uncategorized"]
 # --------------------------------------
 
-# keep track of progress flags
 if "dict_ready" not in st.session_state:
     st.session_state.dict_ready = False
 
@@ -52,12 +52,23 @@ if file:
         df["cleaned"] = df[text_col].apply(clean)
         all_words = " ".join(df["cleaned"]).split()
         word_freq = pd.Series(all_words).value_counts()
-        top = word_freq[word_freq > 1].head(20)
+        top = word_freq[word_freq > 1].head(50)
 
-        st.subheader("Top keywords")
-        st.dataframe(top)
+        stop_words = set([
+            'the', 'is', 'in', 'on', 'and', 'a', 'for', 'you', 'i', 'are', 'of', 'your',
+            'to', 'my', 'with', 'it', 'me', 'this', 'that', 'or'
+        ])
+        filtered_top = [w for w in top.index if w not in stop_words]
 
-        auto_dict = {tactic: set(top.index)}
+        use_default = st.checkbox("✅ Use default dictionary for this tactic")
+        if use_default:
+            auto_dict = {tactic: default_tactics[tactic]}
+        else:
+            auto_dict = {tactic: set(filtered_top)}
+
+        st.subheader("Top keywords (filtered)")
+        st.dataframe(pd.Series(filtered_top, name="Keyword"))
+
         st.write("Auto‑generated dictionary:", auto_dict)
 
         dict_text = st.text_area(
@@ -67,16 +78,15 @@ if file:
         )
         try:
             final_dict = ast.literal_eval(dict_text)
+            st.session_state.dictionary = final_dict  # ✅ Updated to use edited dict
             st.success("Dictionary saved.")
         except Exception:
             st.error("Bad format → using auto dict.")
-            final_dict = auto_dict
+            st.session_state.dictionary = auto_dict
 
-        # store everything for step 5
         st.session_state.df         = df
-        st.session_state.top_words  = top
-        st.session_state.dictionary = final_dict
-        st.session_state.dict_ready = True   # flag that step 4 completed
+        st.session_state.top_words  = pd.Series(filtered_top, name="Keyword")
+        st.session_state.dict_ready = True
 
     # ─────────── STEP 5 – run classifier (only if ready) ───────────
     if st.session_state.dict_ready:
@@ -88,9 +98,10 @@ if file:
             df["categories"] = df["cleaned"].apply(lambda x: classify(x, dictionary))
 
             # -----------------------------▼ NEW COLUMN ▼-----------------------------
-            df["tactic_flag"] = df["categories"].apply(          # <<< ADDED
-                lambda cats: 1 if tactic in cats else 0)         # <<< ADDED
-            # ------------------------------------------------------------------------
+            df["tactic_flag"] = df["categories"].apply(
+                lambda cats: 1 if tactic in cats else 0
+            )
+            # -------------------------------------------------------------------------
 
             counts = pd.Series(
                 [c for cats in df["categories"] for c in cats]
@@ -103,11 +114,11 @@ if file:
             st.table(top_words)
 
             fig, ax = plt.subplots(figsize=(10, 4))
-            top_words.sort_values(ascending=False).plot.bar(ax=ax)
+            pd.Series(top_words).value_counts().sort_values(ascending=False).plot.bar(ax=ax)
             ax.set_title("Top keyword frequencies")
             st.pyplot(fig)
 
-            # downloads
+            # Downloads
             st.download_button(
                 "📥 classified_results.csv",
                 df.to_csv(index=False).encode(),
@@ -122,7 +133,7 @@ if file:
             )
             st.download_button(
                 "📥 top_keywords.csv",
-                top_words.to_csv().encode(),
+                pd.Series(top_words).to_csv().encode(),
                 "top_keywords.csv",
                 "text/csv",
             )
