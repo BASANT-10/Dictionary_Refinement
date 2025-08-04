@@ -1,10 +1,11 @@
 # ───────────────────────────────────────────────────────────
-#  streamlit_app.py   (Aug‑2025, stable UX version)
+#  streamlit_app.py      (Aug‑2025, end‑to‑end build)
 #  ----------------------------------------------------------
-#  • Step 4: build / edit dictionary
-#  • Step 5‑A: Run Classification  → stores predictions
-#  • Step 5‑B: Optional ground‑truth  → Compute Metrics
-#  • Downloads include predictions, ground‑truth, tactic_flag
+#  • Build / edit tactic‑aware dictionary
+#  • Classify text and create 0/1 tactic_flag
+#  • Provide ground‑truth via CSV **or** checkbox UI
+#  • Compute precision, recall, F1 instantly
+#  • Download single CSV with predictions + truth
 # ───────────────────────────────────────────────────────────
 import ast, re
 import streamlit as st
@@ -49,7 +50,6 @@ def to_list(x):
     return []
 
 def safe_bool(x):
-    """Accept 0/1, True/False, '0'/'1' as booleans."""
     if isinstance(x, (int, float)): return bool(x)
     if isinstance(x, str):
         return x.strip().lower() in {"1", "true", "yes"}
@@ -69,7 +69,7 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ────────────────── STEP 2 – upload raw CSV ─────────────────
+# ──────────── STEP 2 – upload raw CSV ──────────────────────
 raw_file = st.file_uploader("📁 Step 2 — upload raw CSV", type="csv")
 if raw_file:
     st.session_state.raw_df = pd.read_csv(raw_file)
@@ -141,13 +141,11 @@ if st.button("🔹 1. Run Classification",
     df["categories"]   = df["cleaned"].apply(lambda x: classify(x, dct))
     df["tactic_flag"]  = df["categories"].apply(lambda cats: int(tactic in cats))
 
-    st.session_state.pred_df = df.copy()   # keep for later
+    st.session_state.pred_df = df.copy()
     st.success("Predictions generated and stored.")
-
-    # quick view
     st.dataframe(df.head())
 
-# show word‑stats if predictions exist
+# category frequency display
 if not st.session_state.pred_df.empty:
     counts = pd.Series(
         [c for cats in st.session_state.pred_df["categories"] for c in cats]
@@ -155,59 +153,95 @@ if not st.session_state.pred_df.empty:
     st.markdown("##### Category frequencies")
     st.table(counts)
 
-# ───────── STEP 5‑B – GROUND‑TRUTH + METRICS ───────────────
+# ───────── STEP 5‑B – GROUND‑TRUTH & METRICS ───────────────
 st.subheader("Step 5‑B — Ground‑truth & Metrics (optional)")
 
-with st.expander("📥  Provide ground‑truth labels"):
-    gt_source = st.radio("Choose method", ["None", "Upload CSV", "Manual entry"],
-                         horizontal=True)
-    if gt_source == "Upload CSV":
-        gt_file = st.file_uploader("Upload CSV with ID & true_label (or truth_flag)",
-                                   type="csv")
-        if gt_file:
-            df_gt = pd.read_csv(gt_file)
-            if "ID" not in df_gt.columns:
-                st.error("Ground‑truth file must contain an ID column.")
-            else:
-                st.session_state.gt_df = df_gt
-                st.success("Ground‑truth file loaded.")
-    elif gt_source == "Manual entry":
-        if st.session_state.pred_df.empty:
-            st.info("Run classification first, then you can edit ground‑truth here.")
-        else:
-            if "true_label" not in st.session_state.pred_df.columns:
-                st.session_state.pred_df["true_label"] = "[]"
-            editable = st.data_editor(
-                st.session_state.pred_df[["ID", text_col, "true_label"]],
-                num_rows="dynamic", height=400, key="manual_gt")
-            st.session_state.pred_df["true_label"] = editable["true_label"]
+gt_source = st.radio(
+    "Ground‑truth source",
+    ["None", "Upload CSV", "Manual entry"],
+    horizontal=True,
+    index=0
+)
+
+# reset uploaded gt when not in upload mode
+if gt_source != "Upload CSV":
+    st.session_state.gt_df = pd.DataFrame()
+
+# ---------- option 1: upload csv ----------
+if gt_source == "Upload CSV":
+    gt_file = st.file_uploader(
+        "Upload CSV with ID + true_label **or** ID + <tactic>_flag",
+        type="csv",
+        key="gt_upload"
+    )
+    if gt_file:
+        st.session_state.gt_df = pd.read_csv(gt_file)
+        st.success("Ground‑truth file loaded.")
+
+# ---------- option 2: manual checkbox ----------
+elif gt_source == "Manual entry":
+    if st.session_state.pred_df.empty:
+        st.info("Run classification first, then you can label rows here.")
+    else:
+        flag_col  = f"{tactic}_flag_gt"   # avoid clash with model flag
+        preview   = "__snippet__"
+
+        df_edit = st.session_state.pred_df.copy()
+        if flag_col not in df_edit.columns:
+            df_edit[flag_col] = False
+        if preview not in df_edit.columns:
+            df_edit[preview] = df_edit[text_col].astype(str).str.slice(0, 120)
+
+        edited = st.data_editor(
+            df_edit[["ID", preview, flag_col]],
+            column_config={
+                flag_col: st.column_config.CheckboxColumn(
+                    label=f"✓ if **{tactic}** is correct",
+                    default=False
+                ),
+                preview: st.column_config.TextColumn(label="Text")
+            },
+            height=600,
+            use_container_width=True,
+            key="manual_gt_check"
+        )
+
+        st.session_state.pred_df[flag_col]   = edited[flag_col]
+        st.session_state.pred_df["true_label"] = edited[flag_col].apply(
+            lambda x: [tactic] if x else []
+        )
 
 # ---------- COMPUTE METRICS ----------
 if st.button("🔹 2. Compute Metrics",
              disabled=st.session_state.pred_df.empty):
+
     df_pred = st.session_state.pred_df.copy()
 
-    # merge gt (if provided via upload)
+    # merge uploaded gt if present
     if not st.session_state.gt_df.empty:
         gt = st.session_state.gt_df.copy()
-        # allow boolean flag column (same name as tactic + '_flag') or true_label list
-        if f"{tactic}_flag" in gt.columns:
-            gt["true_label"] = gt[f"{tactic}_flag"].apply(
+        col_flag = f"{tactic}_flag"
+        if col_flag in gt.columns:
+            gt["true_label"] = gt[col_flag].apply(
                 lambda x: [tactic] if safe_bool(x) else [])
         elif "true_label" not in gt.columns:
-            st.error("Ground‑truth must have a 'true_label' or "
-                     f"'{tactic}_flag' column.")
+            st.error("Ground‑truth CSV must have "
+                     f"'true_label' or '{col_flag}' column.")
             st.stop()
-        df_pred = df_pred.merge(gt[["ID", "true_label"]], on="ID", how="left")
+        df_pred = df_pred.merge(gt[["ID", "true_label"]],
+                                on="ID", how="left", suffixes=("","_y"))
+        if "true_label_y" in df_pred.columns:  # keep uploaded over manual
+            df_pred["true_label"] = df_pred["true_label_y"].combine_first(df_pred["true_label"])
+            df_pred.drop(columns=["true_label_y"], inplace=True)
 
-    # verify we have some truth
+    # ensure truth exists
     if "true_label" not in df_pred.columns or df_pred["true_label"].isna().all():
         st.warning("No ground‑truth labels present → cannot compute metrics.")
     else:
         df_pred["__gt_list__"]   = df_pred["true_label"].apply(to_list)
         df_pred["__pred_list__"] = df_pred["categories"]
 
-        results = []
+        rows = []
         for tac in st.session_state.dictionary.keys():
             df_pred["__pred_flag__"] = df_pred["__pred_list__"].apply(lambda lst: tac in lst)
             df_pred["__gt_flag__"]   = df_pred["__gt_list__"].apply(lambda lst: tac in lst)
@@ -217,20 +251,18 @@ if st.button("🔹 2. Compute Metrics",
             FN = int((~df_pred["__pred_flag__"] & (df_pred["__gt_flag__"])).sum())
 
             prec = TP / (TP + FP) if TP + FP else 0.0
-            recall = TP / (TP + FN) if TP + FN else 0.0
-            f1 = 2*prec*recall / (prec + recall) if prec + recall else 0.0
+            rec  = TP / (TP + FN) if TP + FN else 0.0
+            f1   = 2*prec*rec / (prec + rec) if prec + rec else 0.0
 
-            results.append({"tactic": tac,
-                            "TP": TP, "FP": FP, "FN": FN,
-                            "precision": prec, "recall": recall, "f1": f1})
+            rows.append({"tactic": tac, "TP": TP, "FP": FP, "FN": FN,
+                         "precision": prec, "recall": rec, "f1": f1})
 
-        mdf = pd.DataFrame(results).set_index("tactic")
-        st.markdown("##### Precision / Recall / F1")
-        st.dataframe(mdf.style.format({"precision":"{:.3f}",
-                                       "recall":"{:.3f}",
-                                       "f1":"{:.3f}"}))
+        metrics_df = pd.DataFrame(rows).set_index("tactic")
+        st.markdown("##### Precision / Recall / F1")
+        st.dataframe(metrics_df.style.format({"precision":"{:.3f}",
+                                              "recall":"{:.3f}",
+                                              "f1":"{:.3f}"}))
 
-        # store back the merged truth
         st.session_state.pred_df = df_pred
 
 # ───────── DOWNLOADS ───────────────────────────────────────
