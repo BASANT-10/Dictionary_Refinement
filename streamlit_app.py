@@ -11,6 +11,14 @@ default_tactics = {
     "urgency_marketing":  ["now", "today", "limited", "hurry", "exclusive"],
     "social_proof":       ["bestseller", "popular", "trending", "recommended"],
     "discount_marketing": ["sale", "discount", "deal", "free", "offer"],
+    "Classic_Timeless_Luxury_style': [
+    'elegance', 'heritage', 'sophistication', 'refined', 'timeless', 'grace', 'legacy',
+    'opulence', 'bespoke', 'tailored', 'understated', 'prestige', 'quality',
+    'craftsmanship', 'heirloom', 'classic', 'tradition', 'iconic', 'enduring',
+    'rich', 'authentic', 'luxury', 'fine', 'pure', 'exclusive', 'elite', 'mastery',
+    'immaculate', 'flawless', 'distinction', 'noble', 'chic', 'serene', 'clean',
+    'minimal', 'poised', 'balanced', 'eternal', 'neutral', 'subtle', 'grand', 'legacy',
+    'timelessness', 'tasteful', 'quiet', 'sublime']
 }
 tactic = st.selectbox("🎯 Step 1 — choose a tactic", list(default_tactics.keys()))
 st.write(f"Chosen tactic: **{tactic}**")
