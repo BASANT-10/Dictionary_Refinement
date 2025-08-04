@@ -120,5 +120,3 @@ if file:
             )
 else:
     st.info("Upload a CSV to begin.")
-
-This is a code that works perfectly as a dictionary refinement classifier just check
