@@ -1,10 +1,10 @@
 # ───────────────────────────────────────────────────────────
-#  streamlit_app.py      (Aug‑2025, end‑to‑end build)
+#  streamlit_app.py          (Aug‑2025, numeric‑flag, FIXED)
 #  ----------------------------------------------------------
 #  • Build / edit tactic‑aware dictionary
 #  • Classify text and create 0/1 tactic_flag
-#  • Provide ground‑truth via CSV **or** checkbox UI
-#  • Compute precision, recall, F1 instantly
+#  • Provide ground‑truth via CSV **or** numeric 0/1 column
+#  • Compute precision, recall, F1
 #  • Download single CSV with predictions + truth
 # ───────────────────────────────────────────────────────────
 import ast, re
@@ -138,8 +138,8 @@ if st.button("🔹 1. Run Classification",
     df["cleaned"] = df[text_col].apply(clean)
 
     dct = st.session_state.dictionary
-    df["categories"]   = df["cleaned"].apply(lambda x: classify(x, dct))
-    df["tactic_flag"]  = df["categories"].apply(lambda cats: int(tactic in cats))
+    df["categories"]  = df["cleaned"].apply(lambda x: classify(x, dct))
+    df["tactic_flag"] = df["categories"].apply(lambda cats: int(tactic in cats))
 
     st.session_state.pred_df = df.copy()
     st.success("Predictions generated and stored.")
@@ -178,37 +178,45 @@ if gt_source == "Upload CSV":
         st.session_state.gt_df = pd.read_csv(gt_file)
         st.success("Ground‑truth file loaded.")
 
-# ---------- option 2: manual checkbox ----------
+# ---------- option 2: manual numeric flags ----------
 elif gt_source == "Manual entry":
     if st.session_state.pred_df.empty:
         st.info("Run classification first, then you can label rows here.")
     else:
-        flag_col  = f"{tactic}_flag_gt"   # avoid clash with model flag
-        preview   = "__snippet__"
+        flag_col = f"{tactic}_flag_gt"
+        preview  = "__snippet__"
 
         df_edit = st.session_state.pred_df.copy()
+
+        # ensure numeric int64 column with no NaN
         if flag_col not in df_edit.columns:
-            df_edit[flag_col] = False
+            df_edit[flag_col] = 0
+        df_edit[flag_col] = pd.to_numeric(df_edit[flag_col], errors="coerce").fillna(0).astype("int64")
+
+        # shorter preview column
         if preview not in df_edit.columns:
             df_edit[preview] = df_edit[text_col].astype(str).str.slice(0, 120)
 
         edited = st.data_editor(
             df_edit[["ID", preview, flag_col]],
             column_config={
-                flag_col: st.column_config.CheckboxColumn(
-                    label=f"✓ if **{tactic}** is correct",
-                    default=False
+                flag_col: st.column_config.NumberColumn(
+                    label=f"1 = **{tactic}**   0 = not",
+                    min_value=0, max_value=1, step=1
                 ),
-                preview: st.column_config.TextColumn(label="Text")
+                preview: st.column_config.TextColumn(label="Text (first 120 chars)")
             },
-            height=600,
+            height=650,
             use_container_width=True,
-            key="manual_gt_check"
+            num_rows="dynamic",
+            key="manual_numeric_gt"
         )
 
-        st.session_state.pred_df[flag_col]   = edited[flag_col]
-        st.session_state.pred_df["true_label"] = edited[flag_col].apply(
-            lambda x: [tactic] if x else []
+        # write back
+        st.session_state.pred_df[flag_col] = pd.to_numeric(
+            edited[flag_col], errors="coerce").fillna(0).astype("int64")
+        st.session_state.pred_df["true_label"] = st.session_state.pred_df[flag_col].apply(
+            lambda x: [tactic] if x == 1 else []
         )
 
 # ---------- COMPUTE METRICS ----------
@@ -230,7 +238,7 @@ if st.button("🔹 2. Compute Metrics",
             st.stop()
         df_pred = df_pred.merge(gt[["ID", "true_label"]],
                                 on="ID", how="left", suffixes=("","_y"))
-        if "true_label_y" in df_pred.columns:  # keep uploaded over manual
+        if "true_label_y" in df_pred.columns:
             df_pred["true_label"] = df_pred["true_label_y"].combine_first(df_pred["true_label"])
             df_pred.drop(columns=["true_label_y"], inplace=True)
 
