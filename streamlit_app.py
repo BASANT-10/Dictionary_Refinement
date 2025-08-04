@@ -48,45 +48,73 @@ if file:
     text_col = st.selectbox("📋 Step 3 — select text column", df.columns)
 
     # ─────────── STEP 4 – generate / refine dictionary ───────────
-    if st.button("🧠 Step 4 — Generate Keywords & Dictionary"):
-        df["cleaned"] = df[text_col].apply(clean)
-        all_words = " ".join(df["cleaned"]).split()
-        word_freq = pd.Series(all_words).value_counts()
-        top = word_freq[word_freq > 1].head(50)
+   # ─────────── STEP 4 – generate / refine dictionary ───────────
+if st.button("🧠 Step 4 — Generate Keywords & Dictionary"):
+    # 1 — Initial cleaning -------------------------------------------------------
+    df["cleaned"] = df[text_col].apply(clean)
+    base_terms = set(default_tactics[tactic])          # ← tactic‑specific seed
+
+    # 2 — Identify rows that mention at least one base term ---------------------
+    df["row_matches_tactic"] = df["cleaned"].apply(
+        lambda x: any(tok in x.split() for tok in base_terms)
+    )
+    pos_df = df[df["row_matches_tactic"]]
+
+    # 3 — If no positive rows, fall back to default tactic dictionary ----------
+    if pos_df.empty:
+        st.warning(
+            "None of the rows contained the base terms for this tactic. "
+            "Using the default dictionary only."
+        )
+        contextual_terms = []
+    else:
+        # 3a — Compile word frequencies inside positive rows -------------------
+        all_pos_words = " ".join(pos_df["cleaned"]).split()
+        word_freq = pd.Series(all_pos_words).value_counts()
 
         stop_words = set([
-            'the', 'is', 'in', 'on', 'and', 'a', 'for', 'you', 'i', 'are', 'of', 'your',
-            'to', 'my', 'with', 'it', 'me', 'this', 'that', 'or'
+            'the', 'is', 'in', 'on', 'and', 'a', 'for', 'you', 'i', 'are', 'of',
+            'your', 'to', 'my', 'with', 'it', 'me', 'this', 'that', 'or'
         ])
-        filtered_top = [w for w in top.index if w not in stop_words]
+        contextual_terms = [
+            w for w in word_freq.index
+            if w not in stop_words and w not in base_terms
+        ][:30]   # ← top 30 contextual words
 
-        use_default = st.checkbox("✅ Use default dictionary for this tactic")
-        if use_default:
-            auto_dict = {tactic: default_tactics[tactic]}
-        else:
-            auto_dict = {tactic: set(filtered_top)}
+    # 4 — Create the auto dictionary -------------------------------------------
+    auto_dict = {tactic: sorted(base_terms.union(contextual_terms))}
 
-        st.subheader("Top keywords (filtered)")
-        st.dataframe(pd.Series(filtered_top, name="Keyword"))
+    # 5 — Show information to the user -----------------------------------------
+    st.subheader("Top contextual keywords (after filtering)")
+    if contextual_terms:
+        st.dataframe(pd.Series(contextual_terms, name="Keyword"))
+    else:
+        st.write("‑‑ none found ‑‑")
 
-        st.write("Auto‑generated dictionary:", auto_dict)
+    st.write("Auto‑generated dictionary:", auto_dict)
 
-        dict_text = st.text_area(
-            "✏️ Edit dictionary (Python dict syntax)",
-            value=str(auto_dict),
-            height=150
-        )
-        try:
-            final_dict = ast.literal_eval(dict_text)
-            st.session_state.dictionary = final_dict  # ✅ Updated to use edited dict
-            st.success("Dictionary saved.")
-        except Exception:
-            st.error("Bad format → using auto dict.")
-            st.session_state.dictionary = auto_dict
+    # 6 — Provide editable text area -------------------------------------------
+    dict_text = st.text_area(
+        "✏️ Edit dictionary (Python dict syntax)",
+        value=str(auto_dict),
+        height=150
+    )
+    try:
+        final_dict = ast.literal_eval(dict_text)
+        st.session_state.dictionary = final_dict        # ← ensure edits are saved
+        st.success("Dictionary saved.")
+    except Exception:
+        st.error("Bad format → using auto dict.")
+        st.session_state.dictionary = auto_dict
 
-        st.session_state.df         = df
-        st.session_state.top_words  = pd.Series(filtered_top, name="Keyword")
-        st.session_state.dict_ready = True
+    # 7 — Persist for Step 5 ----------------------------------------------------
+    st.session_state.df         = df
+    st.session_state.top_words  = (
+        pd.Series(contextual_terms, name="Keyword")
+        if contextual_terms else pd.Series([], name="Keyword")
+    )
+    st.session_state.dict_ready = True
+
 
     # ─────────── STEP 5 – run classifier (only if ready) ───────────
     if st.session_state.dict_ready:
