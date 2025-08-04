@@ -1,22 +1,20 @@
-# ──────────────────────────────────────────────────────────────
-#  streamlit_app.py   (end‑to‑end version, Aug‑2025)
-#  -------------------------------------------------------------
-#  1.  Builds / edits a tactic‑aware dictionary
-#  2.  Classifies the uploaded text
-#  3.  Lets you add ground‑truth labels
-#  4.  Shows precision, recall, F1 (per tactic)
-#  5.  Exports a single CSV containing predictions + truth
-# ──────────────────────────────────────────────────────────────
-import ast
-import re
+# ───────────────────────────────────────────────────────────
+#  streamlit_app.py   (Aug‑2025, stable UX version)
+#  ----------------------------------------------------------
+#  • Step 4: build / edit dictionary
+#  • Step 5‑A: Run Classification  → stores predictions
+#  • Step 5‑B: Optional ground‑truth  → Compute Metrics
+#  • Downloads include predictions, ground‑truth, tactic_flag
+# ───────────────────────────────────────────────────────────
+import ast, re
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="📊 Marketing‑Tactic Text Classifier", layout="wide")
+st.set_page_config(page_title="📊 Tactic Classifier + Metrics", layout="wide")
 st.title("📊 Marketing‑Tactic Text Classifier + Metrics")
 
-# ───────────────── STEP 1 – choose tactic ────────────────────
+# ────────────────── built‑in dictionaries ──────────────────
 DEFAULT_TACTICS = {
     "urgency_marketing":  ["now", "today", "limited", "hurry", "exclusive"],
     "social_proof":       ["bestseller", "popular", "trending", "recommended"],
@@ -34,237 +32,210 @@ DEFAULT_TACTICS = {
 tactic = st.selectbox("🎯 Step 1 — choose a tactic", list(DEFAULT_TACTICS.keys()))
 st.write(f"Chosen tactic: **{tactic}**")
 
-# ───────────────── STEP 2 – upload CSV ───────────────────────
-file = st.file_uploader("📁 Step 2 — upload CSV", type="csv")
-
-# ---------- helper functions ---------------------------------
+# ───────────────────────── helpers ─────────────────────────
 def clean(txt: str) -> str:
-    """Lower‑case & remove punctuation/digits for simple tokenisation."""
     return re.sub(r"[^a-zA-Z0-9\s]", "", str(txt).lower())
 
 def classify(txt: str, dct):
-    """Return list of categories whose term list appears at least once."""
     toks = txt.split()
     return [cat for cat, terms in dct.items() if any(w in toks for w in terms)] or ["uncategorized"]
 
-def safe_literal_eval(x):
+def to_list(x):
     if isinstance(x, list):
         return x
     if isinstance(x, str) and x.startswith("["):
-        try:
-            return ast.literal_eval(x)
-        except Exception:
-            return []
+        try: return ast.literal_eval(x)
+        except Exception: return []
     return []
-# -------------------------------------------------------------
 
-# ────────── Initialise session placeholders ──────────────────
-for key, default in {
+def safe_bool(x):
+    """Accept 0/1, True/False, '0'/'1' as booleans."""
+    if isinstance(x, (int, float)): return bool(x)
+    if isinstance(x, str):
+        return x.strip().lower() in {"1", "true", "yes"}
+    return False
+# ───────────────────────────────────────────────────────────
+
+# initialise session objects
+defaults = {
     "dict_ready": False,
     "dictionary": {},
     "top_words":  pd.Series(dtype=int),
-    "df":         pd.DataFrame()
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
+    "raw_df":     pd.DataFrame(),  # uploaded raw data
+    "pred_df":    pd.DataFrame(),  # predictions stored here
+    "gt_df":      pd.DataFrame()   # ground‑truth (if any)
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-# ──────────────────────────────────────────────────────────────
-#                        MAIN APP
-# ──────────────────────────────────────────────────────────────
-if file:
-    df = pd.read_csv(file)
+# ────────────────── STEP 2 – upload raw CSV ─────────────────
+raw_file = st.file_uploader("📁 Step 2 — upload raw CSV", type="csv")
+if raw_file:
+    st.session_state.raw_df = pd.read_csv(raw_file)
+    if "ID" not in st.session_state.raw_df.columns:
+        st.session_state.raw_df.insert(0, "ID", st.session_state.raw_df.index.astype(str))
+    st.dataframe(st.session_state.raw_df.head())
 
-    # ensure an ID column exists for later merges / editing
-    if "ID" not in df.columns:
-        df.insert(0, "ID", df.index.astype(str))
+# need raw_df for everything else
+if st.session_state.raw_df.empty:
+    st.stop()
 
+text_col = st.selectbox("📋 Step 3 — select text column",
+                        st.session_state.raw_df.columns)
+
+# ─────────── STEP 4 – generate / refine dictionary ─────────
+if st.button("🧠 Step 4 — Generate / refine dictionary"):
+    df = st.session_state.raw_df.copy()
+    df["cleaned"] = df[text_col].apply(clean)
+
+    base_terms = set(DEFAULT_TACTICS[tactic])
+    df["row_matches_tactic"] = df["cleaned"].apply(
+        lambda x: any(tok in x.split() for tok in base_terms)
+    )
+    pos_df = df[df["row_matches_tactic"]]
+
+    stop_words = {'the','is','in','on','and','a','for','you','i','are','of',
+                  'your','to','my','with','it','me','this','that','or'}
+
+    if pos_df.empty:
+        contextual_terms, contextual_freq = [], pd.Series(dtype=int)
+        st.warning("No rows matched seed words; using default list only.")
+    else:
+        word_freq = (pos_df["cleaned"]
+                     .str.split(expand=True)
+                     .stack()
+                     .value_counts())
+        contextual_terms = [w for w in word_freq.index
+                            if w not in stop_words and w not in base_terms][:30]
+        contextual_freq  = word_freq.loc[contextual_terms]
+
+    auto_dict = {tactic: sorted(base_terms.union(contextual_terms))}
+
+    st.subheader("Contextual keywords")
+    if not contextual_freq.empty:
+        st.dataframe(contextual_freq.rename("Freq"))
+    else:
+        st.write("‑‑ none found ‑‑")
+
+    dict_text = st.text_area("✏️ Edit dictionary (Python dict syntax)",
+                             value=str(auto_dict), height=150)
+    try:
+        st.session_state.dictionary = ast.literal_eval(dict_text)
+        st.success("Dictionary saved.")
+    except Exception:
+        st.session_state.dictionary = auto_dict
+        st.error("Bad format → reverted to auto dictionary.")
+
+    st.session_state.top_words  = contextual_freq
+    st.session_state.dict_ready = True
+
+# ───────── STEP 5‑A – RUN CLASSIFICATION (predictions) ─────
+st.subheader("Step 5‑A — Classification")
+if st.button("🔹 1. Run Classification",
+             disabled=not st.session_state.dict_ready):
+    df = st.session_state.raw_df.copy()
+    df["cleaned"] = df[text_col].apply(clean)
+
+    dct = st.session_state.dictionary
+    df["categories"]   = df["cleaned"].apply(lambda x: classify(x, dct))
+    df["tactic_flag"]  = df["categories"].apply(lambda cats: int(tactic in cats))
+
+    st.session_state.pred_df = df.copy()   # keep for later
+    st.success("Predictions generated and stored.")
+
+    # quick view
     st.dataframe(df.head())
 
-    text_col = st.selectbox("📋 Step 3 — select text column", df.columns)
+# show word‑stats if predictions exist
+if not st.session_state.pred_df.empty:
+    counts = pd.Series(
+        [c for cats in st.session_state.pred_df["categories"] for c in cats]
+    ).value_counts()
+    st.markdown("##### Category frequencies")
+    st.table(counts)
 
-    # ────────── STEP 4 – generate / refine dictionary ─────────
-    if st.button("🧠 Step 4 — Generate Keywords & Dictionary"):
-        df["cleaned"] = df[text_col].apply(clean)
+# ───────── STEP 5‑B – GROUND‑TRUTH + METRICS ───────────────
+st.subheader("Step 5‑B — Ground‑truth & Metrics (optional)")
 
-        base_terms = set(DEFAULT_TACTICS[tactic])
-        df["row_matches_tactic"] = df["cleaned"].apply(
-            lambda x: any(tok in x.split() for tok in base_terms)
-        )
-        pos_df = df[df["row_matches_tactic"]]
-
-        stop_words = {
-            'the', 'is', 'in', 'on', 'and', 'a', 'for', 'you', 'i', 'are', 'of',
-            'your', 'to', 'my', 'with', 'it', 'me', 'this', 'that', 'or'
-        }
-
-        if pos_df.empty:
-            st.warning(
-                "No rows contained seed words for this tactic — using default list only."
-            )
-            contextual_terms = []
-            contextual_freq  = pd.Series(dtype=int)
+with st.expander("📥  Provide ground‑truth labels"):
+    gt_source = st.radio("Choose method", ["None", "Upload CSV", "Manual entry"],
+                         horizontal=True)
+    if gt_source == "Upload CSV":
+        gt_file = st.file_uploader("Upload CSV with ID & true_label (or truth_flag)",
+                                   type="csv")
+        if gt_file:
+            df_gt = pd.read_csv(gt_file)
+            if "ID" not in df_gt.columns:
+                st.error("Ground‑truth file must contain an ID column.")
+            else:
+                st.session_state.gt_df = df_gt
+                st.success("Ground‑truth file loaded.")
+    elif gt_source == "Manual entry":
+        if st.session_state.pred_df.empty:
+            st.info("Run classification first, then you can edit ground‑truth here.")
         else:
-            all_pos_words = " ".join(pos_df["cleaned"]).split()
-            word_freq = pd.Series(all_pos_words).value_counts()
-            contextual_terms = [
-                w for w in word_freq.index
-                if w not in stop_words and w not in base_terms
-            ][:30]
-            contextual_freq = word_freq.loc[contextual_terms]
+            if "true_label" not in st.session_state.pred_df.columns:
+                st.session_state.pred_df["true_label"] = "[]"
+            editable = st.data_editor(
+                st.session_state.pred_df[["ID", text_col, "true_label"]],
+                num_rows="dynamic", height=400, key="manual_gt")
+            st.session_state.pred_df["true_label"] = editable["true_label"]
 
-        auto_dict = {tactic: sorted(base_terms.union(contextual_terms))}
+# ---------- COMPUTE METRICS ----------
+if st.button("🔹 2. Compute Metrics",
+             disabled=st.session_state.pred_df.empty):
+    df_pred = st.session_state.pred_df.copy()
 
-        st.subheader("Top contextual keywords")
-        if not contextual_freq.empty:
-            st.dataframe(contextual_freq.rename("Frequency"))
-        else:
-            st.write("‑‑ none found ‑‑")
+    # merge gt (if provided via upload)
+    if not st.session_state.gt_df.empty:
+        gt = st.session_state.gt_df.copy()
+        # allow boolean flag column (same name as tactic + '_flag') or true_label list
+        if f"{tactic}_flag" in gt.columns:
+            gt["true_label"] = gt[f"{tactic}_flag"].apply(
+                lambda x: [tactic] if safe_bool(x) else [])
+        elif "true_label" not in gt.columns:
+            st.error("Ground‑truth must have a 'true_label' or "
+                     f"'{tactic}_flag' column.")
+            st.stop()
+        df_pred = df_pred.merge(gt[["ID", "true_label"]], on="ID", how="left")
 
-        st.write("Auto‑generated dictionary:", auto_dict)
+    # verify we have some truth
+    if "true_label" not in df_pred.columns or df_pred["true_label"].isna().all():
+        st.warning("No ground‑truth labels present → cannot compute metrics.")
+    else:
+        df_pred["__gt_list__"]   = df_pred["true_label"].apply(to_list)
+        df_pred["__pred_list__"] = df_pred["categories"]
 
-        dict_text = st.text_area(
-            "✏️ Edit dictionary (Python dict syntax)",
-            value=str(auto_dict),
-            height=150
-        )
-        try:
-            st.session_state.dictionary = ast.literal_eval(dict_text)
-            st.success("Dictionary saved.")
-        except Exception:
-            st.error("Bad format → using auto dict.")
-            st.session_state.dictionary = auto_dict
+        results = []
+        for tac in st.session_state.dictionary.keys():
+            df_pred["__pred_flag__"] = df_pred["__pred_list__"].apply(lambda lst: tac in lst)
+            df_pred["__gt_flag__"]   = df_pred["__gt_list__"].apply(lambda lst: tac in lst)
 
-        st.session_state.df         = df
-        st.session_state.top_words  = contextual_freq
-        st.session_state.dict_ready = True
+            TP = int(((df_pred["__pred_flag__"]) & (df_pred["__gt_flag__"])).sum())
+            FP = int(((df_pred["__pred_flag__"]) & (~df_pred["__gt_flag__"])).sum())
+            FN = int((~df_pred["__pred_flag__"] & (df_pred["__gt_flag__"])).sum())
 
-    # ─────────── STEP 5 – classify & score (if ready) ────────
-    if st.session_state.dict_ready:
-        if st.button("🧪 Step 5 — Run Classification"):
-            df         = st.session_state.df.copy()
-            top_words  = st.session_state.top_words
-            dictionary = st.session_state.dictionary
+            prec = TP / (TP + FP) if TP + FP else 0.0
+            recall = TP / (TP + FN) if TP + FN else 0.0
+            f1 = 2*prec*recall / (prec + recall) if prec + recall else 0.0
 
-            # ---------- predictions ----------
-            df["categories"] = df["cleaned"].apply(lambda x: classify(x, dictionary))
-            df["tactic_flag"] = df["categories"].apply(
-                lambda cats: 1 if tactic in cats else 0
-            )
+            results.append({"tactic": tac,
+                            "TP": TP, "FP": FP, "FN": FN,
+                            "precision": prec, "recall": recall, "f1": f1})
 
-            # ---------- OPTIONAL: ground‑truth input ----------
-            st.markdown("### 🖍 Add ground‑truth labels (optional)")
-            with st.expander("Provide the correct label for each row"):
-                gt_mode = st.radio(
-                    "Ground‑truth source",
-                    ["None", "Manual entry", "Upload CSV"],
-                    horizontal=True,
-                    index=0
-                )
+        mdf = pd.DataFrame(results).set_index("tactic")
+        st.markdown("##### Precision / Recall / F1")
+        st.dataframe(mdf.style.format({"precision":"{:.3f}",
+                                       "recall":"{:.3f}",
+                                       "f1":"{:.3f}"}))
 
-                if gt_mode == "Manual entry":
-                    if "true_label" not in df.columns:
-                        df["true_label"] = "[]"
-                    df_edit = st.data_editor(
-                        df[["ID", text_col, "true_label"]],
-                        num_rows="dynamic",
-                        height=400,
-                        key="gt_editor"
-                    )
-                    df["true_label"] = df_edit["true_label"]
+        # store back the merged truth
+        st.session_state.pred_df = df_pred
 
-                elif gt_mode == "Upload CSV":
-                    gt_file = st.file_uploader(
-                        "Upload CSV with ID and true_label columns",
-                        type="csv",
-                        key="gt_upload"
-                    )
-                    if gt_file:
-                        df_gt = pd.read_csv(gt_file)
-                        if {"ID", "true_label"}.issubset(df_gt.columns):
-                            df = df.merge(df_gt[["ID", "true_label"]],
-                                          on="ID", how="left")
-                            st.success("Ground‑truth merged.")
-                        else:
-                            st.error("CSV must contain ID and true_label columns.")
-
-            # ---------- display word‑level info ----------
-            counts = pd.Series(
-                [c for cats in df["categories"] for c in cats]
-            ).value_counts()
-
-            st.subheader("📊 Category frequencies")
-            st.table(counts)
-
-            st.subheader("🔑 Top contextual keywords")
-            if not top_words.empty:
-                st.table(top_words)
-            else:
-                st.write("‑‑ none to display ‑‑")
-
-            fig, ax = plt.subplots(figsize=(10, 4))
-            if not top_words.empty:
-                top_words.sort_values(ascending=False).plot.bar(ax=ax)
-                ax.set_title("Top contextual keyword frequencies")
-            else:
-                ax.text(0.5, 0.5, "No contextual keywords", ha="center", va="center")
-                ax.set_axis_off()
-            st.pyplot(fig)
-
-            # ---------- precision / recall / F1 ----------
-            if "true_label" in df.columns and df["true_label"].notna().any():
-                df["__gt_list__"]   = df["true_label"].apply(safe_literal_eval)
-                df["__pred_list__"] = df["categories"]
-
-                metric_rows = []
-                for tac in dictionary.keys():
-                    df["__pred_flag__"] = df["__pred_list__"].apply(lambda lst: tac in lst)
-                    df["__gt_flag__"]   = df["__gt_list__"  ].apply(lambda lst: tac in lst)
-
-                    TP = int(((df["__pred_flag__"]) & (df["__gt_flag__"])).sum())
-                    FP = int(((df["__pred_flag__"]) & (~df["__gt_flag__"])).sum())
-                    FN = int((~df["__pred_flag__"] & (df["__gt_flag__"])).sum())
-
-                    precision = TP / (TP + FP) if (TP + FP) else 0.0
-                    recall    = TP / (TP + FN) if (TP + FN) else 0.0
-                    f1        = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
-
-                    metric_rows.append({
-                        "tactic": tac,
-                        "TP": TP, "FP": FP, "FN": FN,
-                        "precision": precision,
-                        "recall": recall,
-                        "f1": f1
-                    })
-
-                mdf = pd.DataFrame(metric_rows).set_index("tactic")
-                st.subheader("📏 Classifier metrics")
-                st.dataframe(
-                    mdf.style.format({"precision":"{:.3f}",
-                                      "recall":"{:.3f}",
-                                      "f1":"{:.3f}"})
-                )
-            else:
-                st.info("Add ground‑truth labels above to see precision / recall / F1.")
-
-            # ---------- downloads ----------
-            st.download_button(
-                "📥 classified_results.csv",
-                df.to_csv(index=False).encode(),
-                "classified_results.csv",
-                "text/csv"
-            )
-            st.download_button(
-                "📥 category_frequencies.csv",
-                counts.to_csv().encode(),
-                "category_frequencies.csv",
-                "text/csv"
-            )
-            if not top_words.empty:
-                st.download_button(
-                    "📥 top_keywords.csv",
-                    top_words.to_csv().encode(),
-                    "top_keywords.csv",
-                    "text/csv"
-                )
-else:
-    st.info("Upload a CSV to begin.")
+# ───────── DOWNLOADS ───────────────────────────────────────
+if not st.session_state.pred_df.empty:
+    st.markdown("### 📥 Download results")
+    st.download_button("classified_results.csv",
+                       st.session_state.pred_df.to_csv(index=False).encode(),
+                       "classified_results.csv", "text/csv")
