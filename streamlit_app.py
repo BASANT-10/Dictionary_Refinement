@@ -1,76 +1,98 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# 📊 Marketing‑Tactic Text Classifier
+# ──────────────────────────────────────────────────────────────────────────────
+# A lightweight Streamlit app that:
+#   1. Lets the user pick a marketing tactic (urgency, social proof, discount).
+#   2. Uploads a CSV and selects which column contains free‑text copy.
+#   3. Generates a quick keyword frequency list.
+#   4. Allows the user to refine the keyword dictionary in‑place.
+#   5. Classifies each row and returns three downloadable CSVs.
+# -----------------------------------------------------------------------------
 
-You said:
-# streamlit_app.py
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import re, ast
 
+st.set_page_config(page_title="Marketing‑Tactic Classifier", layout="wide")
 st.title("📊 Marketing‑Tactic Text Classifier")
 
 # ───────────────── STEP 1 – choose tactic ─────────────────
-default_tactics = {
+DEFAULT_TACTICS = {
     "urgency_marketing":  ["now", "today", "limited", "hurry", "exclusive"],
     "social_proof":       ["bestseller", "popular", "trending", "recommended"],
     "discount_marketing": ["sale", "discount", "deal", "free", "offer"],
 }
-tactic = st.selectbox("🎯 Step 1 — choose a tactic", list(default_tactics.keys()))
+tactic = st.selectbox("🎯 **Step 1 — choose a tactic**", list(DEFAULT_TACTICS.keys()))
 st.write(f"Chosen tactic: **{tactic}**")
 
 # ───────────────── STEP 2 – upload CSV ───────────────────
-file = st.file_uploader("📁 Step 2 — upload CSV", type="csv")
+file = st.file_uploader("📁 **Step 2 — upload CSV**", type="csv")
 
 # ---------- helper functions ----------
 def clean(txt: str) -> str:
+    """Lower‑case, strip punctuation, keep alphanumerics and spaces."""
     return re.sub(r"[^a-zA-Z0-9\s]", "", str(txt).lower())
 
-def classify(txt: str, d):
+def classify(txt: str, mapping: dict) -> list[str]:
+    """Return list of categories whose keyword list appears in txt (else 'uncategorized')."""
     return [
-        cat for cat, terms in d.items()
+        cat for cat, terms in mapping.items()
         if any(word in txt.split() for word in terms)
     ] or ["uncategorized"]
 # --------------------------------------
 
-# keep track of progress flags
-if "dict_ready" not in st.session_state:
-    st.session_state.dict_ready = False
+# initialise session keys once
+for key in ("dict_ready", "df", "top_words", "dictionary"):
+    st.session_state.setdefault(key, False if key == "dict_ready" else None)
+
+# reset session state if a new file is uploaded
+if file and st.session_state.get("uploaded_filename") != file.name:
+    st.session_state.update(
+        dict_ready=False, df=None, top_words=None, dictionary=None,
+        uploaded_filename=file.name
+    )
 
 if file:
     df = pd.read_csv(file)
-    st.dataframe(df.head())   # preview
+    st.subheader("🔎 Data preview")
+    st.dataframe(df.head())
 
-    text_col = st.selectbox("📋 Step 3 — select text column", df.columns)
+    text_col = st.selectbox("📋 **Step 3 — select text column**", df.columns)
 
     # ─────────── STEP 4 – generate / refine dictionary ───────────
     if st.button("🧠 Step 4 — Generate Keywords & Dictionary"):
         df["cleaned"] = df[text_col].apply(clean)
         all_words = " ".join(df["cleaned"]).split()
         word_freq = pd.Series(all_words).value_counts()
-        top = word_freq[word_freq > 1].head(20)
+        top_words = word_freq[word_freq > 1].head(20)
 
-        st.subheader("Top keywords")
-        st.dataframe(top)
+        st.subheader("🔑 Top keywords (freq > 1)")
+        st.dataframe(top_words)
 
-        auto_dict = {tactic: set(top.index)}
+        auto_dict = {tactic: set(top_words.index)}
         st.write("Auto‑generated dictionary:", auto_dict)
 
         dict_text = st.text_area(
-            "✏️ Edit dictionary (Python dict syntax)",
+            "✏️ **Edit dictionary (Python dict literal)**",
             value=str(auto_dict),
             height=150
         )
+
         try:
             final_dict = ast.literal_eval(dict_text)
-            st.success("Dictionary saved.")
+            st.success("Dictionary parsed and saved ✅")
         except Exception:
-            st.error("Bad format → using auto dict.")
+            st.error("❌ Bad format – using auto‑generated dictionary instead.")
             final_dict = auto_dict
 
-        # store everything for step 5
-        st.session_state.df         = df
-        st.session_state.top_words  = top
-        st.session_state.dictionary = final_dict
-        st.session_state.dict_ready = True   # flag that step 4 completed
+        # store for step 5
+        st.session_state.update(
+            dict_ready=True,
+            df=df,
+            top_words=top_words,
+            dictionary=final_dict,
+        )
 
     # ─────────── STEP 5 – run classifier (only if ready) ───────────
     if st.session_state.dict_ready:
@@ -80,12 +102,11 @@ if file:
             dictionary = st.session_state.dictionary
 
             df["categories"] = df["cleaned"].apply(lambda x: classify(x, dictionary))
+            df["tactic_flag"] = df["categories"].apply(
+                lambda cats: 1 if tactic in cats else 0
+            )
 
-            # -----------------------------▼ NEW COLUMN ▼-----------------------------
-            df["tactic_flag"] = df["categories"].apply(          # <<< ADDED
-                lambda cats: 1 if tactic in cats else 0)         # <<< ADDED
-            # ------------------------------------------------------------------------
-
+            # ────── display results ──────
             counts = pd.Series(
                 [c for cats in df["categories"] for c in cats]
             ).value_counts()
@@ -99,9 +120,11 @@ if file:
             fig, ax = plt.subplots(figsize=(10, 4))
             top_words.sort_values(ascending=False).plot.bar(ax=ax)
             ax.set_title("Top keyword frequencies")
+            ax.set_xlabel("Keyword")
+            ax.set_ylabel("Count")
             st.pyplot(fig)
 
-            # downloads
+            # ────── downloads ──────
             st.download_button(
                 "📥 classified_results.csv",
                 df.to_csv(index=False).encode(),
@@ -121,4 +144,4 @@ if file:
                 "text/csv",
             )
 else:
-    st.info("Upload a CSV to begin.")
+    st.info("⬆️ Upload a CSV to begin.")
