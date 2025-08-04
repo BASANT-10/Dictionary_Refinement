@@ -4,6 +4,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import re, ast
 
+# ─────────────────── NEW: metrics helpers ────────────────────
+try:
+    from sklearn.metrics import precision_score, recall_score, f1_score
+    SKL_OK = True
+except ImportError:
+    SKL_OK = False
+# -------------------------------------------------------------
+
 st.title("📊 Marketing‑Tactic Text Classifier")
 
 # ───────────────── STEP 1 – choose tactic ─────────────────
@@ -37,7 +45,18 @@ if file:
     df = pd.read_csv(file)
     st.dataframe(df.head())   # preview
 
-    text_col = st.selectbox("📋 Step 3 — select text column", df.columns)
+    # ─────────── STEP 3a – select text column ───────────
+    text_col = st.selectbox("📋 Step 3a — select text column", df.columns)
+
+    # ─────────── NEW STEP 3b – select ground‑truth (optional) ───────────
+    gt_col_options = ["<none>"] + list(df.columns)
+    gt_col = st.selectbox("🏷️ Step 3b — select ground‑truth column (optional)",
+                          gt_col_options, index=0)
+
+    positive_label = None
+    if gt_col != "<none>":
+        positive_label = st.text_input("✅ Value that means **positive** for this tactic",
+                                       value=tactic)
 
     # ─────────── STEP 4 – generate / refine dictionary ───────────
     if st.button("🧠 Step 4 — Generate Keywords & Dictionary"):
@@ -80,10 +99,36 @@ if file:
             df["categories"] = df["cleaned"].apply(lambda x: classify(x, dictionary))
 
             # -----------------------------▼ NEW COLUMN ▼-----------------------------
-            df["tactic_flag"] = df["categories"].apply(          # <<< ADDED
-                lambda cats: 1 if tactic in cats else 0)         # <<< ADDED
+            df["tactic_flag"] = df["categories"].apply(
+                lambda cats: 1 if tactic in cats else 0)
             # ------------------------------------------------------------------------
 
+            # ─────── NEW: metrics calculation (only if ground‑truth provided) ───────
+            if gt_col != "<none>":
+                y_true = df[gt_col].apply(
+                    lambda x: 1 if str(x).strip().lower() ==
+                               str(positive_label).strip().lower() else 0)
+                y_pred = df["tactic_flag"]
+
+                if SKL_OK:
+                    prec  = precision_score(y_true, y_pred, zero_division=0)
+                    rec   = recall_score(y_true, y_pred, zero_division=0)
+                    f1    = f1_score(y_true, y_pred, zero_division=0)
+                else:  # manual fallback
+                    tp = ((y_true == 1) & (y_pred == 1)).sum()
+                    fp = ((y_true == 0) & (y_pred == 1)).sum()
+                    fn = ((y_true == 1) & (y_pred == 0)).sum()
+                    prec = tp / (tp + fp) if (tp + fp) else 0.0
+                    rec  = tp / (tp + fn) if (tp + fn) else 0.0
+                    f1   = 2*prec*rec / (prec + rec) if (prec + rec) else 0.0
+
+                st.subheader("📈 Classification Metrics")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Precision", f"{prec:.2%}")
+                c2.metric("Recall",    f"{rec:.2%}")
+                c3.metric("F1‑score",  f"{f1:.2%}")
+
+            # ───────────── existing frequency outputs ─────────────
             counts = pd.Series(
                 [c for cats in df["categories"] for c in cats]
             ).value_counts()
@@ -99,7 +144,7 @@ if file:
             ax.set_title("Top keyword frequencies")
             st.pyplot(fig)
 
-            # downloads
+            # ───────────── downloads ─────────────
             st.download_button(
                 "📥 classified_results.csv",
                 df.to_csv(index=False).encode(),
@@ -120,7 +165,3 @@ if file:
             )
 else:
     st.info("Upload a CSV to begin.")
-
-
-
-
