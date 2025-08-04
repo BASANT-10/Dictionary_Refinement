@@ -11,7 +11,7 @@ default_tactics = {
     "urgency_marketing":  ["now", "today", "limited", "hurry", "exclusive"],
     "social_proof":       ["bestseller", "popular", "trending", "recommended"],
     "discount_marketing": ["sale", "discount", "deal", "free", "offer"],
-    "Classic_Timeless_Luxury_style': [
+    "Classic_Timeless_Luxury_style": [
     'elegance', 'heritage', 'sophistication', 'refined', 'timeless', 'grace', 'legacy',
     'opulence', 'bespoke', 'tailored', 'understated', 'prestige', 'quality',
     'craftsmanship', 'heirloom', 'classic', 'tradition', 'iconic', 'enduring',
