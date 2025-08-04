@@ -4,17 +4,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import re, ast
 
-# ────── metrics helpers ──────
-try:
-    from sklearn.metrics import precision_score, recall_score, f1_score
-    SKL_OK = True
-except ImportError:
-    SKL_OK = False
-# ─────────────────────────────
-
 st.title("📊 Marketing‑Tactic Text Classifier")
 
-# ───────── STEP 1 – choose tactic ─────────
+# ───────────────── STEP 1 – choose tactic ─────────────────
 default_tactics = {
     "urgency_marketing":  ["now", "today", "limited", "hurry", "exclusive"],
     "social_proof":       ["bestseller", "popular", "trending", "recommended"],
@@ -23,7 +15,7 @@ default_tactics = {
 tactic = st.selectbox("🎯 Step 1 — choose a tactic", list(default_tactics.keys()))
 st.write(f"Chosen tactic: **{tactic}**")
 
-# ───────── STEP 2 – upload CSV ─────────
+# ───────────────── STEP 2 – upload CSV ───────────────────
 file = st.file_uploader("📁 Step 2 — upload CSV", type="csv")
 
 # ---------- helper functions ----------
@@ -45,24 +37,9 @@ if file:
     df = pd.read_csv(file)
     st.dataframe(df.head())   # preview
 
-    # ─── STEP 3a – select text column ───
-    text_col = st.selectbox("📋 Step 3a — select text column", df.columns)
+    text_col = st.selectbox("📋 Step 3 — select text column", df.columns)
 
-    # ─── STEP 3b – select ground‑truth (optional) ───
-    gt_options = ["<none>"] + list(df.columns)
-    gt_col = st.selectbox("🏷️ Step 3b — select ground‑truth column (optional)",
-                          gt_options, index=0)
-
-    positive_label = None
-    if gt_col != "<none>":
-        # show distinct values to make correct choice easy
-        st.caption(f"Distinct values in **{gt_col}**: {sorted(df[gt_col].unique())}")
-        positive_label = st.text_input(
-            "✅ Which value counts as **positive** for this tactic?",
-            value=tactic
-        )
-
-    # ─── STEP 4 – generate / refine dictionary ───
+    # ─────────── STEP 4 – generate / refine dictionary ───────────
     if st.button("🧠 Step 4 — Generate Keywords & Dictionary"):
         df["cleaned"] = df[text_col].apply(clean)
         all_words = " ".join(df["cleaned"]).split()
@@ -93,7 +70,7 @@ if file:
         st.session_state.dictionary = final_dict
         st.session_state.dict_ready = True   # flag that step 4 completed
 
-    # ─── STEP 5 – run classifier (only if ready) ───
+    # ─────────── STEP 5 – run classifier (only if ready) ───────────
     if st.session_state.dict_ready:
         if st.button("🧪 Step 5 — Run Classification"):
             df         = st.session_state.df.copy()
@@ -101,38 +78,12 @@ if file:
             dictionary = st.session_state.dictionary
 
             df["categories"] = df["cleaned"].apply(lambda x: classify(x, dictionary))
-            df["tactic_flag"] = df["categories"].apply(
-                lambda cats: 1 if tactic in cats else 0)
 
-            # ────── metrics (shown or explained) ──────
-            st.subheader("📈 Classification Metrics")
-            if gt_col != "<none>":
-                # build binary ground‑truth vector
-                y_true = df[gt_col].apply(
-                    lambda x: 1 if str(x).strip().lower() ==
-                               str(positive_label).strip().lower() else 0)
-                y_pred = df["tactic_flag"]
+            # -----------------------------▼ NEW COLUMN ▼-----------------------------
+            df["tactic_flag"] = df["categories"].apply(          # <<< ADDED
+                lambda cats: 1 if tactic in cats else 0)         # <<< ADDED
+            # ------------------------------------------------------------------------
 
-                if SKL_OK:
-                    prec  = precision_score(y_true, y_pred, zero_division=0)
-                    rec   = recall_score(y_true, y_pred, zero_division=0)
-                    f1    = f1_score(y_true, y_pred, zero_division=0)
-                else:
-                    tp = ((y_true == 1) & (y_pred == 1)).sum()
-                    fp = ((y_true == 0) & (y_pred == 1)).sum()
-                    fn = ((y_true == 1) & (y_pred == 0)).sum()
-                    prec = tp / (tp + fp) if (tp + fp) else 0.0
-                    rec  = tp / (tp + fn) if (tp + fn) else 0.0
-                    f1   = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
-
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Precision", f"{prec:.2%}")
-                c2.metric("Recall",    f"{rec:.2%}")
-                c3.metric("F1‑score",  f"{f1:.2%}")
-            else:
-                st.info("Choose a ground‑truth column in **Step 3b** to see metrics.")
-
-            # ────── frequency outputs ──────
             counts = pd.Series(
                 [c for cats in df["categories"] for c in cats]
             ).value_counts()
@@ -148,7 +99,7 @@ if file:
             ax.set_title("Top keyword frequencies")
             st.pyplot(fig)
 
-            # ────── downloads ──────
+            # downloads
             st.download_button(
                 "📥 classified_results.csv",
                 df.to_csv(index=False).encode(),
@@ -169,3 +120,5 @@ if file:
             )
 else:
     st.info("Upload a CSV to begin.")
+
+This is a code that works perfectly as a dictionary refinement classifier just check
